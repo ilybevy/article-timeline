@@ -10,6 +10,10 @@ The idea is simple:
 
 This README focuses on how the project works and how to run it, without heavy math.
 
+A more detailed mathematical formulation, including the objective definition and the role of the regularization parameter λ, is provided in the accompanying technical write-up: https://www.overleaf.com/read/jjvjnkskbxbc#da4a03
+
+The implementation follows this formulation but focuses on an engineering-first perspective: preprocessing, topic modeling, dynamic programming segmentation, and lambda-based model selection.
+
 ## What This Project Solves
 
 When you have many documents across years, it is hard to see where major theme shifts happen.
