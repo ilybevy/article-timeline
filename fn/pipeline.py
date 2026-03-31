@@ -1,41 +1,125 @@
-from tqdm import tqdm
+import os
+import pickle
 import numpy as np
+import tomotopy as tp
 
 from .data_loader import load_docs
-from .distribution import build_keyword_distribution
+from .preprocessing import preprocess_docs
+from .dmr import train_dmr, extract_year_topic_dist
 from .segmentation import build_dp
 from .metrics import compute_total_distortion
 
 
-def build_timeline(path, lambda_penalty=0.1):
-    year_groups = load_docs(path)
+# =========================================================
+# 1. PREPROCESS + SAVE DATASET
+# =========================================================
+
+def preprocess_and_save_dataset(
+    raw_path,
+    output_path="processed_dataset.pkl"
+):
+    """
+    Input: raw json path
+    Output: saved processed dataset (year_groups with tokens)
+    """
+
+    year_groups = load_docs(raw_path)
+
+    print("Preprocessing dataset...")
+    year_groups = preprocess_docs(year_groups)
+
+    with open(output_path, "wb") as f:
+        pickle.dump(year_groups, f)
+
+    print(f"Saved processed dataset to {output_path}")
+    return year_groups
+
+
+def load_processed_dataset(path="processed_dataset.pkl"):
+    if not os.path.exists(path):
+        raise FileNotFoundError("Processed dataset not found.")
+
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+
+# =========================================================
+# 2. TRAIN DMR + SAVE MODEL
+# =========================================================
+
+def train_dmr_model(
+    dataset_path,
+    model_path="dmr_model.bin",
+    k_topics=20,
+    iterations=1000
+):
+    """
+    Input: processed dataset
+    Output: saved DMR model
+    """
+
+    year_groups = load_processed_dataset(dataset_path)
+
+    print("Training DMR model...")
+    model = train_dmr(year_groups, k=k_topics, iterations=iterations)
+
+    print("Saving DMR model...")
+    model.save(model_path)
+
+    print(f"Model saved to {model_path}")
+    return model
+
+
+def load_dmr_model(model_path="dmr_model.bin"):
+    if not os.path.exists(model_path):
+        raise FileNotFoundError("DMR model not found.")
+
+    return tp.DMRModel.load(model_path)
+
+
+# =========================================================
+# 3. BUILD SEGMENTS (TIMELINE)
+# =========================================================
+
+def build_timeline_from_model(
+    dataset_path,
+    model_path,
+    lambda_penalty=0.1,
+    k_topics=20
+):
+    """
+    Input:
+        processed dataset + trained DMR
+    Output:
+        segments + score
+    """
+
+    year_groups = load_processed_dataset(dataset_path)
+    model = load_dmr_model(model_path)
 
     sorted_years = sorted(year_groups.keys())
+
+    print("Extracting topic distributions...")
+    year_topic_dist = extract_year_topic_dist(model, year_groups)
+
     year_distributions = []
 
-    for year in tqdm(sorted_years):
-        docs = year_groups[year]
+    for year in sorted_years:
+        dist = year_topic_dist.get(year)
 
-        dist = build_keyword_distribution(docs)
-
-        embs = [
-            doc["embedding"]
-            for doc in docs
-            if doc.get("embedding") is not None
-        ]
-
-        year_emb = np.mean(embs, axis=0) if embs else None
+        if dist is None:
+            dist = np.zeros(k_topics)
 
         year_distributions.append({
             "year": year,
             "dist": dist,
-            "docs": docs,
-            "embedding": year_emb
+            "docs": year_groups[year]
         })
 
+    print("Running segmentation DP...")
     segments = build_dp(
         [y["dist"] for y in year_distributions],
-        [y["embedding"] for y in year_distributions],
+        [None for _ in year_distributions],
         lambda_penalty
     )
 

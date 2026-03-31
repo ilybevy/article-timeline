@@ -17,8 +17,9 @@ data/*.csv
 *.pkl
 *.pt
 *.ckpt
-
+*.bin
 *.log
+*.xlsx
 
 .DS_Store
 Thumbs.db

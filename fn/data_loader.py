@@ -1,9 +1,5 @@
 import json
 from collections import defaultdict
-from sentence_transformers import SentenceTransformer
-
-# load model 1 lần
-model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
 def load_docs(path: str):
@@ -13,17 +9,17 @@ def load_docs(path: str):
     year_groups = defaultdict(list)
 
     for doc_id, doc in data.items():
-        year = doc["pub_year"]
+        year = str(doc["pub_year"])
 
+        title = doc.get("title", "")
+        keywords = " ".join(doc.get("keywords", []))
         content = doc.get("content", "")
-        embedding = model.encode(content) if content else None
+
+        full_text = f"{keywords} {content}".strip()
 
         year_groups[year].append({
             "id": doc_id,
-            "text": content,
-            "keywords": doc.get("keywords", []),
-            "citation": doc.get("cited_by_count", 0),
-            "embedding": embedding
+            "text": full_text
         })
 
     return year_groups

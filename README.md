@@ -1,188 +1,175 @@
 # Timeline Generator
 
-This project builds a semantic timeline from a corpus of documents grouped by publication year.
-Each year is represented by:
+Timeline Generator is a small pipeline that turns a document collection into a timeline of periods.
+The idea is simple:
 
-1. A keyword probability distribution.
-2. An embedding centroid (mean vector of document embeddings).
+- Group documents by publication year.
+- Learn topic distributions from the corpus.
+- Merge nearby years into coherent segments.
+- Use lambda to control how many segments you get.
 
-The timeline is then segmented into contiguous time intervals using dynamic programming (DP), minimizing a distortion objective with a complexity penalty.
+This README focuses on how the project works and how to run it, without heavy math.
 
-## 1. Problem Formulation
+## What This Project Solves
 
-Given an ordered sequence of years
+When you have many documents across years, it is hard to see where major theme shifts happen.
+This project helps by creating contiguous time segments such as:
 
-$$
-Y = (y_1, y_2, \dots, y_n),
-$$
+- 2010-2013: early phase
+- 2014-2018: growth phase
+- 2019-2023: mature phase
 
-we want to partition it into contiguous segments
+Each segment is built automatically from topic patterns in the data.
 
-$$
-\mathcal{S} = \{[l_1, r_1], [l_2, r_2], \dots, [l_K, r_K]\}
-$$
+## Data Format
 
-such that the total within-segment distortion is minimized while controlling over-segmentation.
+Input files are JSON objects where each item is one document.
+Expected fields used by the loader:
 
-The optimization objective implemented in DP is:
+- pub_year
+- keywords
+- content
+- title (optional)
 
-$$
-\min_{\mathcal{S}} \sum_{[l,r] \in \mathcal{S}} \left(C(l,r) + \lambda\right),
-$$
+Current datasets in this workspace:
 
-where:
+- data/machine_translation_docs_info.json
+- data/machine_learning_docs_info.json
 
-- $C(l,r)$ is the segment distortion cost for years $l..r$.
-- $\lambda > 0$ is a regularization penalty (`lambda_penalty`) per segment.
+## Project Structure
 
-## 2. Year Representation
+- fn/data_loader.py: load raw JSON and group docs by year
+- fn/preprocessing.py: clean text, tokenize, remove stopwords, build n-grams
+- fn/dmr.py: train DMR topic model and extract topic distribution by year
+- fn/segmentation.py: dynamic programming segmentation
+- fn/metrics.py: distortion and scoring helpers
+- fn/pipeline.py: high-level pipeline functions
+- fn/utils.py: helper utilities (lambda sweep, plotting, dataframe export)
+- DMR_JS_DP.ipynb: end-to-end notebook workflow
 
-### 2.1 Keyword Distribution
+## Pipeline Overview
 
-For a year $t$, let keyword count of term $w$ be $c_t(w)$. The normalized keyword distribution is:
+### 1) Preprocess and Save Dataset
 
-$$
-p_t(w) = \frac{c_t(w)}{\sum_{u} c_t(u)}.
-$$
+Function:
 
-In code, keywords are lower-cased and trimmed before counting.
+- preprocess_and_save_dataset(raw_path, output_path)
 
-### 2.2 Embedding Centroid
+What it does:
 
-If year $t$ has document embeddings $\{\mathbf{e}_{t,1}, \dots, \mathbf{e}_{t,m_t}\}$, then the yearly embedding is:
+- Load raw documents from JSON.
+- Build text per document from keywords + content.
+- Clean and tokenize text.
+- Remove stopwords and short tokens.
+- Learn/apply bi-gram and tri-gram phrases.
+- Save processed data as .pkl for faster reuse.
 
-$$
-\mathbf{\mu}_t = \frac{1}{m_t} \sum_{i=1}^{m_t} \mathbf{e}_{t,i}.
-$$
+### 2) Train DMR Model
 
-If no embedding is available, the year embedding is treated as `None`.
+Function:
 
-## 3. Metrics and Distortion
+- train_dmr_model(dataset_path, model_path, k_topics, iterations)
 
-### 3.1 Jensen-Shannon Divergence (Keyword Space)
+What it does:
 
-For two distributions $p$ and $q$, define:
+- Read processed dataset.
+- Train a DMR model where metadata is publication year.
+- Save trained model to disk.
 
-$$
-m = \frac{1}{2}(p + q),
-$$
+### 3) Build Timeline Segments
 
-$$
-\mathrm{KL}(p\|m) = \sum_{w: p(w)>0} p(w)\log\frac{p(w)}{m(w)},
-$$
+Function:
 
-$$
-\mathrm{JS}(p,q) = \frac{1}{2}\mathrm{KL}(p\|m) + \frac{1}{2}\mathrm{KL}(q\|m).
-$$
+- build_timeline_from_model(dataset_path, model_path, lambda_penalty)
 
-Implementation details:
+What it does:
 
-- Union of keyword supports is used.
-- Natural logarithm is used internally, then normalized by $\log 2$, yielding JS in bits:
+- Load processed data + trained model.
+- Extract topic distribution for each year.
+- Run dynamic programming to split years into contiguous segments.
+- Return segments and score breakdown.
 
-$$
-\mathrm{JS}_{\text{bits}}(p,q) = \frac{\mathrm{JS}(p,q)}{\log 2} \in [0,1].
-$$
+## Choosing Lambda
 
-### 3.2 Cosine Distance (Embedding Space)
+Use:
 
-For vectors $\mathbf{a}, \mathbf{b}$:
+- sweep_lambda(dataset_path, model_path)
+- plot_elbow(lambdas, costs, segments)
 
-$$
-\cos(\mathbf{a},\mathbf{b}) = \frac{\mathbf{a}^\top \mathbf{b}}{\|\mathbf{a}\|_2\,\|\mathbf{b}\|_2},
-$$
+How to read the chart:
 
-and the project uses a scaled cosine distance:
+- Lower lambda usually gives more segments.
+- Higher lambda usually gives fewer segments.
+- Pick a value near the elbow where cost improvement starts to flatten.
 
-$$
-d_{\cos}(\mathbf{a},\mathbf{b}) = \frac{1 - \cos(\mathbf{a},\mathbf{b})}{2} \in [0,1].
-$$
+## Main Outputs
 
-If one side is missing (`None`), distance defaults to $0$ in the current implementation.
+build_timeline_from_model(...) returns a dictionary with:
 
-### 3.3 Segment Barycenter and Hybrid Cost
+- segments: list of (start_index, end_index) over sorted years
+- year_distributions: topic distribution info for each year
+- sorted_years: list of years in ascending order
+- total_score: overall distortion score
+- score_breakdown: per-segment details
 
-For a segment with yearly distributions $\{p_i\}$ and optional weights $\{w_i\}$, keyword barycenter is:
+If you need a tabular summary, use:
 
-$$
-\bar{p}(w) = \frac{\sum_i w_i p_i(w)}{\sum_i w_i}.
-$$
+- segments_to_dataframe(result)
 
-Embedding barycenter is:
+## Quick Start (Notebook)
 
-$$
-\bar{\mathbf{\mu}} = \frac{1}{|\mathcal{I}|}\sum_{i \in \mathcal{I}} \mathbf{\mu}_i,
-$$
+Open DMR_JS_DP.ipynb and run cells in order:
 
-where $\mathcal{I}$ indexes years with non-null embeddings.
+1. Clean dataset and save pkl files.
+2. Train DMR models.
+3. Sweep lambda and plot elbow.
+4. Choose lambda and generate final segments.
 
-Per-year hybrid distortion inside the segment:
+## Minimal Script Example
 
-$$
-h_i = \frac{1}{2}\,\mathrm{JS}(p_i, \bar{p}) + \frac{1}{2}\,d_{\cos}(\mathbf{\mu}_i, \bar{\mathbf{\mu}}).
-$$
+```python
+from fn.pipeline import (
+	preprocess_and_save_dataset,
+	train_dmr_model,
+	build_timeline_from_model,
+)
 
-Segment cost:
+preprocess_and_save_dataset(
+	r"data\machine_translation_docs_info.json",
+	r"data\translation_dataset.pkl",
+)
 
-$$
-C(l,r) = \sum_{i=l}^{r} w_i h_i.
-$$
+train_dmr_model(
+	r"data\translation_dataset.pkl",
+	r"models\trans_dmr.bin",
+	k_topics=20,
+	iterations=500,
+)
 
-Notes:
+result = build_timeline_from_model(
+	r"data\translation_dataset.pkl",
+	r"models\trans_dmr.bin",
+	lambda_penalty=0.25,
+)
 
-- During DP (`build_dp`), segment cost is computed with uniform weights.
-- During final reporting (`compute_total_distortion`), weights are document counts per year (fallback $1$ if empty).
+print(result["segments"])
+print(result["total_score"])
+```
 
-## 4. Dynamic Programming
+## Dependencies
 
-Let $dp[i]$ be the minimum objective value for the first $i$ years.
+Core libraries used in code:
 
-Base condition:
+- numpy
+- pandas
+- matplotlib
+- tomotopy
+- gensim
 
-$$
-dp[0] = 0.
-$$
+Install with your preferred environment manager, then run the notebook.
 
-Transition:
+## Notes
 
-$$
-dp[i] = \min_{0 \le j < i}\left\{dp[j] + C(j,i-1) + \lambda\right\}.
-$$
-
-Backpointer:
-
-$$
-\mathrm{prev}[i] = \arg\min_{0 \le j < i}\left\{dp[j] + C(j,i-1) + \lambda\right\}.
-$$
-
-Recovered segments are obtained by backtracking from $i=n$ via `prev`.
-
-Complexity:
-
-- States: $n+1$.
-- Transitions: $O(n^2)$.
-- Segment costs are memoized with cache key $(i,j)$.
-
-## 5. Pipeline Summary
-
-1. Load documents from JSON and group by publication year.
-2. Compute per-document embeddings with `all-MiniLM-L6-v2`.
-3. Build yearly keyword distributions and yearly embedding centroids.
-4. Run DP segmentation with penalty $\lambda$.
-5. Compute total distortion and per-segment breakdown.
-
-## 6. Main Outputs
-
-`build_timeline(...)` returns:
-
-- `segments`: list of `(start_index, end_index)` over sorted years.
-- `year_distributions`: per-year metadata (`year`, `dist`, `docs`, `embedding`).
-- `sorted_years`: ascending year list.
-- `total_score`: summed segment distortion.
-- `score_breakdown`: per-segment distortion diagnostics.
-
-## 7. Key Hyperparameter
-
-- `lambda_penalty` ($\lambda$): controls the trade-off between fit and number of segments.
-	- Larger $\lambda$ -> fewer, broader segments.
-	- Smaller $\lambda$ -> more, finer segments.
+- The current main pipeline is topic-distribution based.
+- Keep input years reasonably continuous for cleaner segmentation behavior.
+- If scores look unstable, try increasing iterations or adjusting k_topics.
