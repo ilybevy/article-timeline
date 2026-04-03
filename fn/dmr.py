@@ -3,27 +3,45 @@ import numpy as np
 from collections import defaultdict
 
 
-def train_dmr(year_groups, k=20, iterations=1000):
+import tomotopy as tp
+import os
+
+
+def train_dmr(year_groups, k=20, iterations=1000, log_filename=None):
     """
     year_groups: {year: [docs]}
+
+    log_filename: tên file log (optional)
     """
 
     model = tp.DMRModel(k=k)
 
-    docs_meta = []
+    log_path = None
+    if log_filename is not None:
+        os.makedirs("output", exist_ok=True)
+        log_path = os.path.join("output", log_filename)
 
-    # add docs
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write("step\tll_per_word\n")
+
     for year, docs in year_groups.items():
         for doc in docs:
             words = doc["tokens"]
-
             model.add_doc(words, metadata=year)
-            docs_meta.append(year)
 
-    # train
     for i in range(0, iterations, 10):
         model.train(10)
-        print(f"Iter {i+10}: LL per word = {model.ll_per_word}")
+        step = i + 10
+        ll = model.ll_per_word
+
+        print(f"Iter {step}: LL per word = {ll:.6f}")
+
+        if log_path is not None:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"{step}\t{ll:.6f}\n")
+
+    if log_path is not None:
+        print(f"\nSaved training log to: {log_path}")
 
     return model
 

@@ -51,7 +51,8 @@ def train_dmr_model(
     dataset_path,
     model_path="dmr_model.bin",
     k_topics=20,
-    iterations=1000
+    iterations=1000,
+    log_filename=None   
 ):
     """
     Input: processed dataset
@@ -61,14 +62,18 @@ def train_dmr_model(
     year_groups = load_processed_dataset(dataset_path)
 
     print("Training DMR model...")
-    model = train_dmr(year_groups, k=k_topics, iterations=iterations)
+    model = train_dmr(
+        year_groups,
+        k=k_topics,
+        iterations=iterations,
+        log_filename=log_filename 
+    )
 
     print("Saving DMR model...")
     model.save(model_path)
 
     print(f"Model saved to {model_path}")
     return model
-
 
 def load_dmr_model(model_path="dmr_model.bin"):
     if not os.path.exists(model_path):
@@ -91,7 +96,7 @@ def build_timeline_from_model(
     Input:
         processed dataset + trained DMR
     Output:
-        segments + score
+        segments + score + full topic vectors
     """
 
     year_groups = load_processed_dataset(dataset_path)
@@ -112,19 +117,25 @@ def build_timeline_from_model(
 
         year_distributions.append({
             "year": year,
-            "dist": dist,
+            "dist": dist.tolist(),   # <-- convert sang list để serialize dễ hơn
             "docs": year_groups[year]
         })
 
     print("Running segmentation DP...")
     segments = build_dp(
-        [y["dist"] for y in year_distributions],
+        [np.array(y["dist"]) for y in year_distributions],  # convert lại khi dùng
         [None for _ in year_distributions],
         lambda_penalty
     )
 
     score, breakdown = compute_total_distortion(
-        year_distributions,
+        [
+            {
+                "year": y["year"],
+                "dist": np.array(y["dist"])   # convert lại cho metrics
+            }
+            for y in year_distributions
+        ],
         segments
     )
 

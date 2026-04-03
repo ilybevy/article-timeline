@@ -14,58 +14,6 @@ def build_doc_dist(doc):
     return {k: w for k in keywords}
 
 
-def get_representative_docs(year_distributions, l, r, top_k=3):
-    seg_dists = []
-    seg_docs = []
-
-    for i in range(l, r + 1):
-        year_dist = year_distributions[i]["dist"]
-        seg_dists.append(year_dist)
-
-        for doc in year_distributions[i].get("docs", []):
-            doc_copy = doc.copy()
-
-            doc_dist = build_doc_dist(doc)
-            if not doc_dist:
-                doc_dist = year_dist
-
-            doc_copy["_dist"] = doc_dist
-            doc_copy["_emb"] = doc.get("embedding")
-
-            seg_docs.append(doc_copy)
-
-    # keyword barycenter
-    bary = {}
-    total = len(seg_dists)
-
-    for dist in seg_dists:
-        for k, v in dist.items():
-            bary[k] = bary.get(k, 0) + v
-
-    for k in bary:
-        bary[k] /= total
-
-    # embedding barycenter
-    embs = [d["_emb"] for d in seg_docs if d["_emb"] is not None]
-    emb_bary = np.mean(embs, axis=0) if embs else None
-
-    # scoring
-    scored = []
-    for doc in seg_docs:
-        js = jensen_shannon(doc["_dist"], bary)
-
-        if emb_bary is not None and doc["_emb"] is not None:
-            cos = cosine_distance(doc["_emb"], emb_bary)
-        else:
-            cos = 0.0
-
-        score = 0.5 * js + 0.5 * cos
-        scored.append((score, doc))
-
-    scored.sort(key=lambda x: x[0])
-
-    return scored[:top_k]
-
 def segments_to_dataframe(result):
     """
     Convert segmentation result → pandas DataFrame
@@ -76,7 +24,7 @@ def segments_to_dataframe(result):
         - period
         - num_docs
         - topic
-        - topic_certainty
+        - topic_vector
     """
 
     segments = result["segments"]
@@ -98,9 +46,8 @@ def segments_to_dataframe(result):
         # barycenter
         bary = np.mean(seg_matrix, axis=0)
 
-        # topic + certainty
+        # dominant topic
         topic = int(np.argmax(bary))
-        certainty = float(np.max(bary))
 
         rows.append({
             "start_year": years[l],
@@ -108,7 +55,7 @@ def segments_to_dataframe(result):
             "period": r - l + 1,
             "num_docs": num_docs,
             "topic": topic,
-            "topic_certainty": certainty
+            "topic_vector": bary.tolist()
         })
 
     df = pd.DataFrame(rows)
@@ -166,3 +113,84 @@ def plot_elbow(lambdas, costs, segments):
     plt.grid(True)
 
     plt.show()
+
+
+import numpy as np
+import pandas as pd
+
+
+def merge_segments(df, min_docs=5):
+    """
+    Input:
+        df: DataFrame có các cột:
+            start_year, end_year, period, num_docs, topic, topic_vector
+
+    Output:
+        DataFrame đã:
+            - filter num_docs >= min_docs
+            - merge các segment liên tiếp cùng topic
+    """
+
+    # 1. filter
+    df = df[df["num_docs"] >= min_docs].copy()
+    df = df.sort_values("start_year").reset_index(drop=True)
+
+    merged_rows = []
+
+    current = None
+
+    for _, row in df.iterrows():
+        vec = np.array(row["topic_vector"], dtype=np.float32)
+
+        if current is None:
+            current = {
+                "start_year": row["start_year"],
+                "end_year": row["end_year"],
+                "num_docs": row["num_docs"],
+                "topic": row["topic"],
+                "vector_sum": vec * row["num_docs"]
+            }
+            continue
+
+        # nếu cùng topic → merge
+        if row["topic"] == current["topic"]:
+            current["end_year"] = row["end_year"]
+            current["num_docs"] += row["num_docs"]
+            current["vector_sum"] += vec * row["num_docs"]
+
+        else:
+            # finalize current
+            bary = current["vector_sum"] / current["num_docs"]
+
+            merged_rows.append({
+                "start_year": current["start_year"],
+                "end_year": current["end_year"],
+                "period": current["end_year"] - current["start_year"] + 1,
+                "num_docs": current["num_docs"],
+                "topic": current["topic"],
+                "topic_vector": bary.tolist()
+            })
+
+            # start new
+            current = {
+                "start_year": row["start_year"],
+                "end_year": row["end_year"],
+                "num_docs": row["num_docs"],
+                "topic": row["topic"],
+                "vector_sum": vec * row["num_docs"]
+            }
+
+    # finalize last
+    if current is not None:
+        bary = current["vector_sum"] / current["num_docs"]
+
+        merged_rows.append({
+            "start_year": current["start_year"],
+            "end_year": current["end_year"],
+            "period": current["end_year"] - current["start_year"] + 1,
+            "num_docs": current["num_docs"],
+            "topic": current["topic"],
+            "topic_vector": bary.tolist()
+        })
+
+    return pd.DataFrame(merged_rows)
