@@ -65,3 +65,25 @@ def extract_year_topic_dist(model, year_groups):
         year_dist[year] = np.mean(dists, axis=0)
 
     return year_dist
+
+def extract_topic_keywords(model, top_n=10):
+    """
+    Output:
+        {
+            topic_id: [(word, prob), ...]
+        }
+    """
+
+    topic_keywords = {}
+
+    for k in range(model.k):
+        words = model.get_topic_words(k, top_n=top_n)
+        topic_keywords[k] = [
+            {
+                "word": w,
+                "prob": float(p)
+            }
+            for w, p in words
+        ]
+
+    return topic_keywords
