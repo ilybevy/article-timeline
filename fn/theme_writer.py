@@ -11,7 +11,6 @@ from .config import (
     REQUEST_TIMEOUT
 )
 
-
 class ThemeWriter:
 
     def __init__(self, embed_fn, dim: int = 768):
@@ -40,8 +39,6 @@ class ThemeWriter:
 
     def build_index(self, papers: List[Dict[str, Any]]):
         vectors = []
-
-        # 🔥 map doc_id -> doc_enum (1..N)
         self.doc_enum_map = {}
         for i, paper in enumerate(papers):
             self.doc_enum_map[paper["id"]] = i + 1
@@ -120,10 +117,6 @@ class ThemeWriter:
             context += f"[{local_id}] {ch['text']}\n"
             local_map[local_id] = ch
 
-        # DEBUG
-        print("\n==== CONTEXT ====")
-        print(context)
-
         prompt = f"""
 Answer the question using ONLY the context below.
 Every claim MUST have citation.
@@ -135,12 +128,7 @@ Context:
 Question:
 {question}
 """
-
         answer = self.call_llm(prompt)
-
-        print("\n==== RAW ANSWER ====")
-        print(answer)
-
         return answer, local_map
 
     def normalize_citation(self, text: str, local_map: Dict[int, Dict]):
@@ -158,7 +146,7 @@ Question:
 
         return re.sub(r"\[(\d+)\]", repl, text)
 
-    def generate_theme(self, papers: List[Dict], questions: List[str]):
+    def generate_theme(self, papers: List[Dict], questions: Dict[str, str]):
         self._reset_index()
         self.build_index(papers)
 
@@ -167,9 +155,9 @@ Question:
 
         answers = []
 
-        for q in questions:
-            chunks = self.search(q, top_k=5)
-            ans, local_map = self.answer_question(q, chunks)
+        for query, question in questions.items():
+            chunks = self.search(query, top_k=5)
+            ans, local_map = self.answer_question(question, chunks)
             ans = self.normalize_citation(ans, local_map)
             answers.append(ans)
 
