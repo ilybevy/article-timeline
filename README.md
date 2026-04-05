@@ -1,12 +1,11 @@
 # Timeline Generator
 
-Timeline Generator is a small pipeline that turns a document collection into a timeline of periods.
-The idea is simple:
+Timeline Generator turns a collection of research papers into a clear timeline of thematic periods.
 
-- Group documents by publication year.
-- Learn topic distributions from the corpus.
-- Merge nearby years into coherent segments.
-- Use lambda to control how many segments you get.
+In simple terms, it helps answer:
+- What were the main themes in each time window?
+- When to choose to split the timeline segment?
+- How can we summarize each period with representative papers and concise descriptions?
 
 This README focuses on how the project works and how to run it, without heavy math.
 
@@ -14,166 +13,116 @@ A more detailed mathematical formulation, including the objective definition and
 
 The implementation follows this formulation but focuses on an engineering-first perspective: preprocessing, topic modeling, dynamic programming segmentation, and lambda-based model selection.
 
-## What This Project Solves
+## What This Project Does
 
-When you have many documents across years, it is hard to see where major theme shifts happen.
-This project helps by creating contiguous time segments such as:
+Given a dataset of papers (with publication years), the project:
+1. Cleans and standardizes text.
+2. Learns topic signals from the corpus.
+3. Splits the timeline into meaningful contiguous periods.
+4. Produces summary outputs for analysis and reporting.
 
-- 2010-2013: early phase
-- 2014-2018: growth phase
-- 2019-2023: mature phase
-
-Each segment is built automatically from topic patterns in the data.
-
-## Data Format
+## Input Data
 
 Input files are JSON objects where each item is one document.
-Expected fields used by the loader:
 
-- pub_year
-- keywords
-- content
-- title (optional)
+Main fields used:
+- `pub_year`
+- `keywords`
+- `content`
+- `title` (optional)
 
 Current datasets in this workspace:
+- `data/machine_translation_docs_info.json`
+- `data/machine_learning_docs_info.json`
 
-- data/machine_translation_docs_info.json
-- data/machine_learning_docs_info.json
+## Pipeline at a Glance
 
-## Project Structure
+The workflow has four practical stages:
 
-- fn/data_loader.py: load raw JSON and group docs by year
-- fn/preprocessing.py: clean text, tokenize, remove stopwords, build n-grams
-- fn/dmr.py: train DMR topic model and extract topic distribution by year
-- fn/segmentation.py: dynamic programming segmentation
-- fn/metrics.py: distortion and scoring helpers
-- fn/pipeline.py: high-level pipeline functions
-- fn/utils.py: helper utilities (lambda sweep, plotting, dataframe export)
-- DMR_JS_DP.ipynb: end-to-end notebook workflow
+1. Data preparation
+2. Topic modeling
+3. Timeline segmentation
+4. Period-level storytelling (labels, themes, representative papers)
 
-## Pipeline Overview
 
-### 1) Preprocess and Save Dataset
+## Module Responsibilities
 
-Function:
+### `fn/data_loader.py`
+Reads raw JSON and groups papers by publication year.
 
-- preprocess_and_save_dataset(raw_path, output_path)
+### `fn/preprocessing.py`
+Cleans text, tokenizes it, removes stopwords, and builds n-grams.
 
-What it does:
+### `fn/dmr.py`
+Trains the topic model and extracts topic distributions.
 
-- Load raw documents from JSON.
-- Build text per document from keywords + content.
-- Clean and tokenize text.
-- Remove stopwords and short tokens.
-- Learn/apply bi-gram and tri-gram phrases.
-- Save processed data as .pkl for faster reuse.
+Why it matters:
+- Produces the core signals used to detect period changes.
 
-### 2) Train DMR Model
+### `fn/segmentation.py`
+Builds timeline segments from year-level topic signals.
 
-Function:
+Why it matters:
+- Converts noisy year-by-year trends into coherent periods.
 
-- train_dmr_model(dataset_path, model_path, k_topics, iterations)
+### `fn/metrics.py`
+Scores segmentation quality.
 
-What it does:
+### `fn/pipeline.py`
+High-level orchestration functions.
 
-- Read processed dataset.
-- Train a DMR model where metadata is publication year.
-- Save trained model to disk.
+### `fn/utils.py`
+Helper functions for lambda sweep, elbow plotting, and DataFrame export.
 
-### 3) Build Timeline Segments
+### `fn/make_details.py`
+Builds final period-level output files.
 
-Function:
+### `fn/representative_doc_maker.py`
+Selects representative papers for each period.
 
-- build_timeline_from_model(dataset_path, model_path, lambda_penalty)
+### `fn/label_maker.py`
+Generates short labels for each period.
 
-What it does:
+### `fn/theme_writer.py`
+Generates descriptive thematic text for each period.
 
-- Load processed data + trained model.
-- Extract topic distribution for each year.
-- Run dynamic programming to split years into contiguous segments.
-- Return segments and score breakdown.
-
-## Choosing Lambda
-
-Use:
-
-- sweep_lambda(dataset_path, model_path)
-- plot_elbow(lambdas, costs, segments)
-
-How to read the chart:
-
-- Lower lambda usually gives more segments.
-- Higher lambda usually gives fewer segments.
-- Pick a value near the elbow where cost improvement starts to flatten.
-
-## Main Outputs
-
-build_timeline_from_model(...) returns a dictionary with:
-
-- segments: list of (start_index, end_index) over sorted years
-- year_distributions: topic distribution info for each year
-- sorted_years: list of years in ascending order
-- total_score: overall distortion score
-- score_breakdown: per-segment details
-
-If you need a tabular summary, use:
-
-- segments_to_dataframe(result)
+### `DMR_JS_DP.ipynb`
+End-to-end notebook workflow.
 
 ## Quick Start (Notebook)
 
-Open DMR_JS_DP.ipynb and run cells in order:
+Open `DMR_JS_DP.ipynb` and run cells in this order:
 
-1. Clean dataset and save pkl files.
+1. Clean datasets and save processed `.pkl` files.
 2. Train DMR models.
-3. Sweep lambda and plot elbow.
-4. Choose lambda and generate final segments.
+3. Sweep lambda and view elbow charts.
+4. Build final timeline segments.
+5. Generate period labels and thematic summaries.
 
-## Minimal Script Example
+## Main Outputs
 
-```python
-from fn.pipeline import (
-	preprocess_and_save_dataset,
-	train_dmr_model,
-	build_timeline_from_model,
-)
+Typical outputs include:
+- Trained models: `models/*.bin`
+- Document-topic maps: `models/*_mapping.pkl`
+- Segment tables: `output/*_df.csv`
+- Detailed period summaries: `output/*.json`
 
-preprocess_and_save_dataset(
-	r"data\machine_translation_docs_info.json",
-	r"data\translation_dataset.pkl",
-)
+## Practical Tuning Tips
 
-train_dmr_model(
-	r"data\translation_dataset.pkl",
-	r"models\trans_dmr.bin",
-	k_topics=20,
-	iterations=500,
-)
+- Too many segments: increase `lambda_penalty`.
+- Too few segments: decrease `lambda_penalty`.
+- Unstable or weak topics: increase training iterations or adjust topic count.
 
-result = build_timeline_from_model(
-	r"data\translation_dataset.pkl",
-	r"models\trans_dmr.bin",
-	lambda_penalty=0.25,
-)
+## Core Dependencies
 
-print(result["segments"])
-print(result["total_score"])
-```
+Main libraries used:
+- `numpy`
+- `pandas`
+- `matplotlib`
+- `tomotopy`
+- `gensim`
+- `nltk`
+- `faiss`
+- `requests`
 
-## Dependencies
-
-Core libraries used in code:
-
-- numpy
-- pandas
-- matplotlib
-- tomotopy
-- gensim
-
-Install with your preferred environment manager, then run the notebook.
-
-## Notes
-
-- The current main pipeline is topic-distribution based.
-- Keep input years reasonably continuous for cleaner segmentation behavior.
-- If scores look unstable, try increasing iterations or adjusting k_topics.
+Install dependencies with your preferred environment manager, then run the notebook.
