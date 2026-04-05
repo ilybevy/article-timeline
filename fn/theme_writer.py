@@ -11,16 +11,28 @@ from .config import (
     REQUEST_TIMEOUT
 )
 
+from sentence_transformers import SentenceTransformer
+
+
 class ThemeWriter:
 
-    def __init__(self, embed_fn, dim: int = 768):
-        self.embed_fn = embed_fn
-        self.dim = dim
+    def __init__(self, embed_model_name: str = "all-MiniLM-L6-v2"):
+        # load embedding model
+        self.embed_model = SentenceTransformer(embed_model_name)
+
+        # dynamic dimension (không hardcode 768 nữa)
+        self.dim = self.embed_model.get_sentence_embedding_dimension()
+
         self._reset_index()
 
     def _reset_index(self):
-        self.index = faiss.IndexFlatL2(self.dim)
+        # cosine similarity = inner product + normalized vectors
+        self.index = faiss.IndexFlatIP(self.dim)
         self.chunks = []
+
+    def embed_fn(self, text: str):
+        vec = self.embed_model.encode(text, normalize_embeddings=True)
+        return vec.astype("float32")
 
     def chunk_text(self, text: str, chunk_size=300, overlap=50):
         if not text:
@@ -40,6 +52,7 @@ class ThemeWriter:
     def build_index(self, papers: List[Dict[str, Any]]):
         vectors = []
         self.doc_enum_map = {}
+
         for i, paper in enumerate(papers):
             self.doc_enum_map[paper["id"]] = i + 1
 
@@ -65,14 +78,14 @@ class ThemeWriter:
         if not vectors:
             return
 
-        vectors = np.array(vectors).astype("float32")
+        vectors = np.vstack(vectors).astype("float32")
         self.index.add(vectors)
 
     def search(self, query: str, top_k=5):
         if len(self.chunks) == 0:
             return []
 
-        q_emb = np.array([self.embed_fn(query)]).astype("float32")
+        q_emb = self.embed_fn(query).reshape(1, -1)
         D, I = self.index.search(q_emb, top_k)
 
         results = []

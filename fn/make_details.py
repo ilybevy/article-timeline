@@ -5,6 +5,7 @@ import pickle
 import ast
 import numpy as np
 from typing import Dict
+from sentence_transformers import SentenceTransformer
 
 from .representative_doc_maker import get_representative_papers
 from .label_maker import generate_period_label
@@ -42,9 +43,10 @@ def aggregate_segment_stats(year_index, start_year, end_year):
     return total_papers, total_citations
 
 
-def embed_fn(text: str):
-    return np.random.rand(768)   
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
+def embed_fn(text: str):
+    return model.encode(text, normalize_embeddings=True)
 
 def make_details(
     csv_path: str,
@@ -63,7 +65,7 @@ def make_details(
         doc_topic_map = pickle.load(f)
 
     output = []
-    theme_writer = ThemeWriter(embed_fn=embed_fn)
+    theme_writer = ThemeWriter()
 
     for _, row in df.iterrows():
         start_year = int(row["start_year"])
