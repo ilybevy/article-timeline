@@ -1,18 +1,26 @@
 import re
-from gensim.parsing.preprocessing import STOPWORDS
 from gensim.models.phrases import Phrases, Phraser
 from nltk.corpus import stopwords
 
+
+
+with open("data/EN_STOPWORDS.txt", "r", encoding="utf-8") as f:
+    EN_STOPWORDS = set(
+        line.strip().lower()
+        for line in f
+        if line.strip()
+    )
 
 GERMAN_STOPWORDS = set(stopwords.words("german"))
 
 DOMAIN_STOPWORDS = {
     "method", "methods", "approach", "approaches",
     "data", "dataset", "paper", "result", "results",
-    "study", "studies", "technology", "analysis", "algorithm", "system", "systems", "based"
+    "study", "studies", "technology", "analysis",
+    "algorithm", "system", "systems", "based", "use"
 }
 
-STOPWORDS_EXTENDED = STOPWORDS.union(GERMAN_STOPWORDS).union(DOMAIN_STOPWORDS)
+STOPWORDS = EN_STOPWORDS.union(GERMAN_STOPWORDS).union(DOMAIN_STOPWORDS)
 
 
 URL_PATTERN = re.compile(r"http\S+|www\.\S+")
@@ -46,7 +54,7 @@ def tokenize(text: str):
 def remove_stopwords(words):
     return [
         w for w in words
-        if w not in STOPWORDS_EXTENDED and len(w) > 2
+        if w not in STOPWORDS and len(w) > 2
     ]
 
 

@@ -5,7 +5,7 @@ import tomotopy as tp
 
 from .data_loader import load_docs
 from .preprocessing import preprocess_docs
-from .dmr import train_dmr, extract_year_topic_dist
+from .dmr import train_dmr, extract_year_topic_dist, build_doc_topic_mapping
 from .segmentation import build_dp
 from .metrics import compute_total_distortion
 
@@ -49,31 +49,41 @@ def load_processed_dataset(path="processed_dataset.pkl"):
 
 def train_dmr_model(
     dataset_path,
-    model_path="dmr_model.bin",
+    model_path="models/dmr_model.bin",
+    mapping_filename="doc_topic_map.pkl",
     k_topics=20,
     iterations=1000,
-    log_filename=None   
+    log_filename=None
 ):
-    """
-    Input: processed dataset
-    Output: saved DMR model
-    """
 
     year_groups = load_processed_dataset(dataset_path)
 
     print("Training DMR model...")
-    model = train_dmr(
+    model, doc_id_list = train_dmr(
         year_groups,
         k=k_topics,
         iterations=iterations,
-        log_filename=log_filename 
+        log_filename=log_filename
     )
+
+    os.makedirs("models", exist_ok=True)
 
     print("Saving DMR model...")
     model.save(model_path)
-
     print(f"Model saved to {model_path}")
-    return model
+
+    print("Building doc-topic mapping...")
+    doc_topic_map = build_doc_topic_mapping(model, doc_id_list)
+
+    mapping_path = os.path.join("models", mapping_filename)
+
+    import pickle
+    with open(mapping_path, "wb") as f:
+        pickle.dump(doc_topic_map, f)
+
+    print(f"Mapping saved to {mapping_path}")
+
+    return model, doc_topic_map
 
 def load_dmr_model(model_path="dmr_model.bin"):
     if not os.path.exists(model_path):

@@ -8,13 +8,10 @@ import os
 
 
 def train_dmr(year_groups, k=20, iterations=1000, log_filename=None):
-    """
-    year_groups: {year: [docs]}
-
-    log_filename: tên file log (optional)
-    """
 
     model = tp.DMRModel(k=k)
+
+    doc_id_list = []
 
     log_path = None
     if log_filename is not None:
@@ -27,7 +24,9 @@ def train_dmr(year_groups, k=20, iterations=1000, log_filename=None):
     for year, docs in year_groups.items():
         for doc in docs:
             words = doc["tokens"]
+
             model.add_doc(words, metadata=year)
+            doc_id_list.append(doc["id"])
 
     for i in range(0, iterations, 10):
         model.train(10)
@@ -43,8 +42,15 @@ def train_dmr(year_groups, k=20, iterations=1000, log_filename=None):
     if log_path is not None:
         print(f"\nSaved training log to: {log_path}")
 
-    return model
+    return model, doc_id_list
 
+def build_doc_topic_mapping(model, doc_id_list):
+    doc_topic_map = {}
+
+    for model_doc, doc_id in zip(model.docs, doc_id_list):
+        doc_topic_map[doc_id] = model_doc.get_topic_dist().tolist()
+
+    return doc_topic_map
 
 def extract_year_topic_dist(model, year_groups):
     """
@@ -66,24 +72,3 @@ def extract_year_topic_dist(model, year_groups):
 
     return year_dist
 
-def extract_topic_keywords(model, top_n=10):
-    """
-    Output:
-        {
-            topic_id: [(word, prob), ...]
-        }
-    """
-
-    topic_keywords = {}
-
-    for k in range(model.k):
-        words = model.get_topic_words(k, top_n=top_n)
-        topic_keywords[k] = [
-            {
-                "word": w,
-                "prob": float(p)
-            }
-            for w, p in words
-        ]
-
-    return topic_keywords
