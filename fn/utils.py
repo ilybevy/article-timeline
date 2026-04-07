@@ -43,18 +43,13 @@ def segments_to_dataframe(result):
 
         seg_matrix = np.array(seg_dists)
 
-        # barycenter
         bary = np.mean(seg_matrix, axis=0)
-
-        # dominant topic
-        topic = int(np.argmax(bary))
 
         rows.append({
             "start_year": years[l],
             "end_year": years[r],
             "period": r - l + 1,
             "num_docs": num_docs,
-            "topic": topic,
             "topic_vector": bary.tolist()
         })
 

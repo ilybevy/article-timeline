@@ -1,27 +1,47 @@
 import re
+import spacy
 from gensim.models.phrases import Phrases, Phraser
-from nltk.corpus import stopwords
+from spacy.lang.de.stop_words import STOP_WORDS as GERMAN_STOPWORDS
+from spacy.lang.fr.stop_words import STOP_WORDS as FRENCH_STOPWORDS
 
-
+nlp = spacy.load("en_core_web_sm", disable=["parser", "ner"])
 
 with open("data/EN_STOPWORDS.txt", "r", encoding="utf-8") as f:
-    EN_STOPWORDS = set(
-        line.strip().lower()
-        for line in f
-        if line.strip()
-    )
+    EN_STOPWORDS = set(line.strip().lower() for line in f if line.strip())
 
-GERMAN_STOPWORDS = set(stopwords.words("german"))
+GERMAN_STOPWORDS = set(GERMAN_STOPWORDS)
+FRENCH_STOPWORDS = set(FRENCH_STOPWORDS)
 
 DOMAIN_STOPWORDS = {
     "method", "methods", "approach", "approaches",
     "data", "dataset", "paper", "result", "results",
     "study", "studies", "technology", "analysis",
-    "algorithm", "system", "systems", "based", "use"
+    "algorithm", "system", "systems", "based", "use", "theory", "propose", "proposed"
 }
 
-STOPWORDS = EN_STOPWORDS.union(GERMAN_STOPWORDS).union(DOMAIN_STOPWORDS)
+POST_TOKEN_FILTER = {
+    "learning",
+    "learn",
+    "machine",
+    "science",
+    "model",
+    "models",
+    "methodology",
+    "framework",
+    "based_method",
+    "data_set",
+    "dataset",
+    "system_model",
+    "processing",
+    "base"
+}
 
+STOPWORDS = (
+    EN_STOPWORDS
+    .union(GERMAN_STOPWORDS)
+    .union(FRENCH_STOPWORDS)
+    .union(DOMAIN_STOPWORDS)
+)
 
 URL_PATTERN = re.compile(r"http\S+|www\.\S+")
 EMAIL_PATTERN = re.compile(r"\S+@\S+")
@@ -30,46 +50,53 @@ NON_TEXT_PATTERN = re.compile(r"[^a-z\s]")
 
 def clean_text(text: str) -> str:
     text = text.lower()
-
-    # remove urls
     text = URL_PATTERN.sub(" ", text)
-
-    # remove emails
     text = EMAIL_PATTERN.sub(" ", text)
-
-    # normalize newline / whitespace
     text = text.replace("\n", " ")
-
-    # remove non alphabetic
     text = NON_TEXT_PATTERN.sub(" ", text)
     text = re.sub(r"\s+", " ", text).strip()
-
     return text
 
 
 def tokenize(text: str):
-    return text.split()
+    doc = nlp(text)
+    return [t.lemma_ for t in doc]
 
 
 def remove_stopwords(words):
-    return [
-        w for w in words
-        if w not in STOPWORDS and len(w) > 2
-    ]
+    return [w for w in words if w not in STOPWORDS and len(w) > 2]
 
+
+def apply_post_token_filter(words):
+    return [w for w in words if w not in POST_TOKEN_FILTER and len(w) > 2]
+
+
+def normalize_keywords(keywords):
+    if not keywords:
+        return []
+
+    out = []
+    for k in keywords:
+        if not k:
+            continue
+
+        k = k.lower().strip()
+        k = NON_TEXT_PATTERN.sub(" ", k)
+        k = re.sub(r"\s+", "_", k).strip()
+
+        if len(k) > 2:
+            out.append(k)
+
+    return out
 
 
 def build_ngram_models(
     tokenized_docs,
-    bigram_min_count=5,
-    bigram_threshold=10,
-    trigram_min_count=10,
-    trigram_threshold=15
+    bigram_min_count=15,
+    bigram_threshold=15,
+    trigram_min_count=17,
+    trigram_threshold=17
 ):
-    """
-    Build separate tunable bigram + trigram models.
-    """
-
     bigram = Phrases(
         tokenized_docs,
         min_count=bigram_min_count,
@@ -96,28 +123,34 @@ def apply_ngrams(words, bigram_model, trigram_model):
 
 
 def preprocess_docs(year_groups):
-    all_tokenized = []
+    all_content_tokens = []
+    doc_refs = []
 
-    for docs in year_groups.values():
+    # PASS 1
+    for year, docs in year_groups.items():
         for doc in docs:
-            text = doc.get("text", "")
-
-            text = clean_text(text)
+            text = clean_text(doc.get("content", ""))
             words = tokenize(text)
             words = remove_stopwords(words)
+            # words = apply_post_token_filter(words)
 
-            all_tokenized.append(words)
+            all_content_tokens.append(words)
+            doc_refs.append(doc)
 
-    bigram_model, trigram_model = build_ngram_models(all_tokenized)
+    bigram_model, trigram_model = build_ngram_models(all_content_tokens)
 
-    idx = 0
-    for docs in year_groups.values():
-        for doc in docs:
-            words = all_tokenized[idx]
-            words = apply_ngrams(words, bigram_model, trigram_model)
+    # PASS 2
+    for i, doc in enumerate(doc_refs):
+        content_tokens = all_content_tokens[i]
 
-            doc["tokens"] = words
-            idx += 1
+        content_tokens = apply_ngrams(
+            content_tokens,
+            bigram_model,
+            trigram_model
+        )
+        content_tokens = apply_post_token_filter(content_tokens)
+        keyword_tokens = normalize_keywords(doc.get("keywords", []))
+
+        doc["tokens"] = content_tokens + keyword_tokens
 
     return year_groups
-    

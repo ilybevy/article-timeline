@@ -1,6 +1,5 @@
-import json
 from collections import defaultdict
-
+import json
 
 def load_docs(path: str):
     with open(path, "r", encoding="utf-8") as f:
@@ -11,15 +10,13 @@ def load_docs(path: str):
     for doc_id, doc in data.items():
         year = str(doc["pub_year"])
 
-        title = doc.get("title", "")
-        keywords = " ".join(doc.get("keywords", []))
+        keywords = doc.get("keywords", []) 
         content = doc.get("content", "")
-
-        full_text = f"{keywords} {content}".strip()
 
         year_groups[year].append({
             "id": doc_id,
-            "text": full_text
+            "content": content,
+            "keywords": keywords
         })
 
     return year_groups

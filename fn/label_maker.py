@@ -1,60 +1,45 @@
-import requests
-
-from .config import (
-    XAI_API_KEY,
-    XAI_API_URL,
-    GROK_MODEL,
-    REQUEST_TIMEOUT,
-    MAX_TOKENS_LABEL,
-    TEMPERATURE_LABEL
-)
+import numpy as np
+from collections import defaultdict
 
 
-# =========================================================
-# LLM LABEL GENERATION (ONLY KEYWORDS)
-# =========================================================
-def generate_period_label(keywords):
+def _select_top_topics(topic_vector, threshold=0.5):
+    pairs = [(i, float(p)) for i, p in enumerate(topic_vector)]
+    pairs.sort(key=lambda x: x[1], reverse=True)
 
-    keyword_str = ", ".join(keywords)
+    selected = []
+    acc = 0.0
 
-    prompt = f"""
-You are an expert in scientific history analysis.
+    for tid, prob in pairs:
+        selected.append((tid, prob))
+        acc += prob
+        if acc >= threshold:
+            break
 
-Dominant topic keywords:
-{keyword_str}
+    return selected
 
-Task:
-Generate a concise label describing the research paradigm.
 
-Constraints:
-- Maximum 12 words
-- Must reflect scientific methodology or paradigm
-- No punctuation at the end
-- No explanations
-- Output only the label
-""".strip()
+def _get_topic_words(model, topic_id, top_n):
+    return model.get_topic_words(topic_id, top_n=top_n)
 
-    headers = {
-        "Authorization": f"Bearer {XAI_API_KEY}",
-        "Content-Type": "application/json"
-    }
 
-    payload = {
-        "model": GROK_MODEL,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": TEMPERATURE_LABEL,
-        "max_tokens": MAX_TOKENS_LABEL
-    }
+def generate_period_label(
+    segment_topic_vector,
+    model,
+    threshold=0.5,
+    top_words_per_topic=50,
+    top_k=10
+):
+    selected_topics = _select_top_topics(segment_topic_vector, threshold)
 
-    response = requests.post(
-        XAI_API_URL,
-        headers=headers,
-        json=payload,
-        timeout=REQUEST_TIMEOUT
-    )
+    score_map = defaultdict(float)
 
-    response.raise_for_status()
+    for topic_id, topic_prob in selected_topics:
+        words = _get_topic_words(model, topic_id, top_words_per_topic)
 
-    return response.json()["choices"][0]["message"]["content"].strip()
+        for word, word_prob in words:
+            score_map[word] += topic_prob * word_prob
+
+    ranked = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
+    top_words = [w for w, _ in ranked[:top_k]]
+
+    return ", ".join(top_words)

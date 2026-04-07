@@ -3,13 +3,11 @@ import pandas as pd
 import tomotopy as tp
 import pickle
 import ast
-import numpy as np
 from typing import Dict
-from sentence_transformers import SentenceTransformer
 
 from .representative_doc_maker import get_representative_papers
 from .label_maker import generate_period_label
-from .theme_writer import ThemeWriter  
+from .theme_writer import ThemeWriter
 
 
 def load_raw_data(raw_path: str):
@@ -29,24 +27,22 @@ def build_year_index(raw_data):
             "title": doc.get("title", ""),
             "citation_count": doc.get("cited_by_count", 0),
             "year": year,
-            "content": doc.get("content", "")  
+            "content": doc.get("content", "")
         })
     return year_index
+
 
 def aggregate_segment_stats(year_index, start_year, end_year):
     total_papers = 0
     total_citations = 0
+
     for y in range(start_year, end_year + 1):
         docs = year_index.get(y, [])
         total_papers += len(docs)
         total_citations += sum(d["citation_count"] for d in docs)
+
     return total_papers, total_citations
 
-
-model = SentenceTransformer("all-MiniLM-L6-v2")
-
-def embed_fn(text: str):
-    return model.encode(text, normalize_embeddings=True)
 
 def make_details(
     csv_path: str,
@@ -59,18 +55,19 @@ def make_details(
     df = pd.read_csv(csv_path)
     raw_data = load_raw_data(raw_data_path)
     year_index = build_year_index(raw_data)
-    model = tp.DMRModel.load(model_path)
+
+    dmr_model = tp.DMRModel.load(model_path)
 
     with open(mapping_path, "rb") as f:
         doc_topic_map = pickle.load(f)
 
-    output = []
     theme_writer = ThemeWriter()
+
+    output = []
 
     for _, row in df.iterrows():
         start_year = int(row["start_year"])
         end_year = int(row["end_year"])
-        topic_id = int(row["topic"])
 
         docs = []
         for y in range(start_year, end_year + 1):
@@ -82,21 +79,19 @@ def make_details(
             end_year
         )
 
-        words = model.get_topic_words(topic_id, top_n=20)
-        keywords = [w for w, _ in words]
-
-        period_label = generate_period_label(
-            keywords=keywords,
-        )
-
         segment_topic_vector = ast.literal_eval(row["topic_vector"])
 
         representative_papers = get_representative_papers(
             docs=docs,
             doc_topic_map=doc_topic_map,
             segment_topic_vector=segment_topic_vector,
-            top_k=5,
-            threshold=0.5
+            top_k=8,
+            threshold=0.6
+        )
+
+        period_label = generate_period_label(
+            segment_topic_vector=segment_topic_vector,
+            model=dmr_model
         )
 
         main_theme = theme_writer.generate_theme(

@@ -4,6 +4,8 @@ from typing import List, Dict, Any
 import requests
 import re
 
+from sentence_transformers import SentenceTransformer, CrossEncoder
+
 from .config import (
     XAI_API_KEY,
     XAI_API_URL,
@@ -11,22 +13,21 @@ from .config import (
     REQUEST_TIMEOUT
 )
 
-from sentence_transformers import SentenceTransformer
-
 
 class ThemeWriter:
 
-    def __init__(self, embed_model_name: str = "all-MiniLM-L6-v2"):
-        # load embedding model
+    def __init__(
+        self,
+        embed_model_name: str = "all-MiniLM-L6-v2",
+        reranker_model_name: str = "BAAI/bge-reranker-large"
+    ):
         self.embed_model = SentenceTransformer(embed_model_name)
+        self.reranker = CrossEncoder(reranker_model_name)
 
-        # dynamic dimension (không hardcode 768 nữa)
         self.dim = self.embed_model.get_sentence_embedding_dimension()
-
         self._reset_index()
 
     def _reset_index(self):
-        # cosine similarity = inner product + normalized vectors
         self.index = faiss.IndexFlatIP(self.dim)
         self.chunks = []
 
@@ -40,8 +41,8 @@ class ThemeWriter:
 
         words = text.split()
         chunks = []
-
         i = 0
+
         while i < len(words):
             chunk = words[i:i + chunk_size]
             chunks.append(" ".join(chunk))
@@ -81,7 +82,7 @@ class ThemeWriter:
         vectors = np.vstack(vectors).astype("float32")
         self.index.add(vectors)
 
-    def search(self, query: str, top_k=5):
+    def search(self, query: str, top_k=20):
         if len(self.chunks) == 0:
             return []
 
@@ -96,6 +97,16 @@ class ThemeWriter:
 
         return results
 
+    def rerank(self, query: str, chunks: List[Dict], top_k=5):
+        if not chunks:
+            return []
+
+        pairs = [(query, c["text"]) for c in chunks]
+        scores = self.reranker.predict(pairs)
+
+        ranked = sorted(zip(chunks, scores), key=lambda x: x[1], reverse=True)
+        return [c for c, _ in ranked[:top_k]]
+
     def call_llm(self, prompt: str) -> str:
         res = requests.post(
             XAI_API_URL,
@@ -105,9 +116,7 @@ class ThemeWriter:
             },
             json={
                 "model": GROK_MODEL,
-                "messages": [
-                    {"role": "user", "content": prompt}
-                ],
+                "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.2
             },
             timeout=REQUEST_TIMEOUT
@@ -131,9 +140,8 @@ class ThemeWriter:
             local_map[local_id] = ch
 
         prompt = f"""
-Answer the question using ONLY the context below.
-Every claim MUST have citation.
-Use inline citations like [1], [2].
+Answer using ONLY context.
+Cite every claim with [1], [2].
 
 Context:
 {context}
@@ -141,6 +149,7 @@ Context:
 Question:
 {question}
 """
+
         answer = self.call_llm(prompt)
         return answer, local_map
 
@@ -152,10 +161,7 @@ Question:
             if not chunk:
                 return "[UNK]"
 
-            doc_enum = chunk["doc_enum"]
-            chunk_id = chunk["chunk_id"]
-
-            return f"[{doc_enum}.{chunk_id}]"
+            return f"[{chunk['doc_enum']}.{chunk['chunk_id']}]"
 
         return re.sub(r"\[(\d+)\]", repl, text)
 
@@ -169,8 +175,9 @@ Question:
         answers = []
 
         for query, question in questions.items():
-            chunks = self.search(query, top_k=5)
-            ans, local_map = self.answer_question(question, chunks)
+            candidates = self.search(query, top_k=20)
+            top_chunks = self.rerank(question, candidates, top_k=5)
+            ans, local_map = self.answer_question(question, top_chunks)
             ans = self.normalize_citation(ans, local_map)
             answers.append(ans)
 
